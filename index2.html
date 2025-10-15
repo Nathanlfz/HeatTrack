@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mon Heatmap d'Activité Strava</title>
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><path d=%22M 20 80 C 40 20, 60 100, 80 20%22 stroke=%22%23fc5200%22 stroke-width=%2212%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>">
+
+    <!-- Leaflet Library -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        /* Setup de base */
+        html, body {
+            margin: 0; padding: 0; height: 100%; width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden; background-color: #f0f0f0; color: #333;
+        }
+        #map { width: 100%; height: 100%; background-color: #ddd; }
+
+        /* Panneau UI en Glassmorphism */
+        .ui-panel {
+            position: absolute; top: 15px; right: 15px; z-index: 1000;
+            background-color: rgba(255, 255, 255, 0.65);
+            backdrop-filter: blur(12px) saturate(180%);
+            -webkit-backdrop-filter: blur(12px) saturate(180%);
+            padding: 20px; border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            display: flex; flex-direction: column; gap: 12px;
+            width: 250px; align-items: center;
+        }
+        
+        /* Styles du Logo */
+        .logo { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .logo-icon-container {
+            width: 80px; height: 80px; background-color: rgba(255, 228, 225, 0.7);
+            border-radius: 20px; padding: 12px; box-sizing: border-box;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .route-line-svg { width: 100%; height: 100%; }
+        .logo-text { font-size: 20px; font-weight: 600; color: #333; }
+
+        /* Styles des boutons */
+        button {
+            width: 100%; padding: 12px 15px; font-size: 14px; font-weight: 600;
+            border: none; border-radius: 8px; cursor: pointer;
+            transition: all 0.2s ease; color: #fff; text-align: center;
+        }
+        #connect-btn { background-color: #fc5200; }
+        #connect-btn:hover { background-color: #d84700; }
+        #locate-btn { background-color: #3a86ff; }
+        #locate-btn:hover { background-color: #3378e0; }
+
+        /* Message de statut */
+        #status {
+            font-size: 13px; text-align: center; padding: 8px; border-radius: 6px;
+            background-color: rgba(0,0,0,0.05); color: #555; width: 100%; box-sizing: border-box;
+        }
+        #status.loading { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { background-color: rgba(0,0,0,0.05); } 50% { background-color: rgba(0,0,0,0.1); } 100% { background-color: rgba(0,0,0,0.05); }
+        }
+        
+        /* Style pour le curseur sur les tracés */
+        .route-path { cursor: pointer; }
+
+        /* Popup d'activité en Glassmorphism (MODIFIÉ) */
+        .leaflet-popup.activity-popup .leaflet-popup-content-wrapper {
+            background: rgba(20, 20, 20, 0.5); /* Fond sombre et très transparent */
+            backdrop-filter: blur(10px); /* Flou plus subtil et moderne */
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 14px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 0;
+            color: #f5f5f5; /* Couleur de texte par défaut claire */
+        }
+
+        .leaflet-popup.activity-popup .leaflet-popup-tip {
+            background: rgba(20, 20, 20, 0.5);
+            box-shadow: none;
+        }
+
+        .popup-card {
+            padding: 14px 20px;
+            font-size: 13px;
+            color: #f5f5f5; /* Texte principal clair */
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5); /* Ombre pour la lisibilité */
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .popup-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #ffffff; /* Titre en blanc pur */
+            margin-bottom: 2px;
+        }
+
+        .popup-subtitle {
+            font-size: 12px;
+            font-weight: 500;
+            color: #dcdcdc; /* Sous-titre légèrement grisé */
+            margin-bottom: 6px;
+        }
+
+        .popup-stats div {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <div class="ui-panel">
+        <div class="logo">
+            <div class="logo-icon-container">
+                <svg class="route-line-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+                    <path d="M 20 80 C 40 20, 60 100, 80 20" stroke="#fc5200" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div class="logo-text">HeatTrack</div>
+        </div>
+        <button id="connect-btn">Se connecter à Strava</button>
+        <button id="locate-btn">Centrer sur ma position</button>
+        <div id="status">Connectez-vous pour voir vos parcours.</div>
+    </div>
+
+    <script>
+    const stravaConfig = {
+        clientId: "181138", // Remplacez par votre Client ID
+        clientSecret: "562ba5fa52e2f89db6075a59d0f9960247268623", // Remplacez par votre Client Secret
+        redirectUri: window.location.origin + window.location.pathname,
+        scope: "activity:read_all",
+        authUrl: "https://www.strava.com/oauth/authorize",
+        tokenUrl: "https://www.strava.com/api/v3/oauth/token",
+        activitiesUrl: "https://www.strava.com/api/v3/athlete/activities",
+    };
+
+    const connectButton = document.getElementById('connect-btn');
+    const locateButton = document.getElementById('locate-btn');
+    const statusDiv = document.getElementById('status');
+    
+    const map = L.map('map').setView([48.8566, 2.3522], 12);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19
+    }).addTo(map);
+
+    let routeLayerGroup = L.layerGroup().addTo(map);
+    let selectedRoute = null;
+
+    const defaultStyle = { color: '#ff7b3d', weight: 2.5, opacity: 0.85 };
+    const selectedStyle = { color: '#3a86ff', weight: 4.5, opacity: 1.0 };
+
+    map.on('click', function() {
+        if (selectedRoute) {
+            selectedRoute.setStyle(defaultStyle);
+            selectedRoute = null;
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const authCode = urlParams.get('code');
+        const accessToken = localStorage.getItem('strava_access_token');
+        const tokenExpiresAt = localStorage.getItem('strava_token_expires_at');
+
+        if (accessToken && Date.now() < tokenExpiresAt) { fetchActivities(); } 
+        else if (authCode) { exchangeCodeForToken(authCode); } 
+        else { showSampleRoute(); }
+    });
+
+    connectButton.addEventListener('click', () => {
+        if (stravaConfig.clientId === "YOUR_CLIENT_ID" || !stravaConfig.clientId) {
+            updateStatus("Veuillez configurer vos identifiants Strava dans le script !", false);
+            return;
+        }
+        const authUrl = `${stravaConfig.authUrl}?client_id=${stravaConfig.clientId}&redirect_uri=${encodeURIComponent(stravaConfig.redirectUri)}&response_type=code&scope=${stravaConfig.scope}`;
+        window.location.href = authUrl;
+    });
+    
+    locateButton.addEventListener('click', () => {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const { latitude, longitude } = position.coords;
+                map.setView([latitude, longitude], 14);
+                L.marker([latitude, longitude]).addTo(map).bindPopup("Votre position").openPopup();
+            },
+            (error) => {
+                updateStatus("Impossible d'obtenir votre position.", false);
+                console.error("Erreur de géolocalisation:", error);
+            }
+        );
+    });
+
+    async function exchangeCodeForToken(code) {
+        try {
+            updateStatus("Authentification en cours...", true);
+            const response = await fetch(stravaConfig.tokenUrl, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: stravaConfig.clientId, client_secret: stravaConfig.clientSecret,
+                    code: code, grant_type: 'authorization_code',
+                }),
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Échec de l'obtention du token: ${errorData.message}`);
+            }
+            const data = await response.json();
+            const expiresAt = data.expires_at * 1000;
+            localStorage.setItem('strava_access_token', data.access_token);
+            localStorage.setItem('strava_refresh_token', data.refresh_token);
+            localStorage.setItem('strava_token_expires_at', expiresAt);
+            window.history.replaceState({}, document.title, window.location.pathname);
+            fetchActivities();
+        } catch (error) {
+            console.error("Erreur lors de l'échange du code:", error);
+            updateStatus(`L'authentification a échoué. Veuillez réessayer.`, false);
+        }
+    }
+
+    async function fetchActivities() {
+        updateStatus("Récupération des activités...", true);
+        connectButton.style.display = 'none';
+        const accessToken = localStorage.getItem('strava_access_token');
+        if (!accessToken) {
+            updateStatus("Non authentifié.", false);
+            return;
+        }
+
+        let allActivities = [];
+        let page = 1;
+        const perPage = 100;
+        let activitiesFound = true;
+
+        try {
+            while (activitiesFound) {
+                updateStatus(`Récupération de la page ${page}...`, true);
+                const response = await fetch(`${stravaConfig.activitiesUrl}?page=${page}&per_page=${perPage}`, {
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        localStorage.clear();
+                        updateStatus("Session expirée. Veuillez vous reconnecter.", false);
+                        connectButton.style.display = 'block';
+                        return;
+                    }
+                    throw new Error(`Erreur API: ${response.statusText}`);
+                }
+
+                const activities = await response.json();
+                if (activities.length === 0) {
+                    activitiesFound = false;
+                } else {
+                    const routes = activities
+                        .filter(a => a.map && a.map.summary_polyline)
+                        .map(a => ({
+                            name: a.name,
+                            type: a.type,
+                            distance: a.distance / 1000, // m → km
+                            elevation: a.total_elevation_gain,
+                            moving_time: a.moving_time,
+                            average_speed: a.average_speed * 3.6, // m/s → km/h
+                            mapPoints: decodePolyline(a.map.summary_polyline),
+                            date: new Date(a.start_date_local).toLocaleDateString('fr-FR')
+                        }));
+                    allActivities.push(...routes);
+                    page++;
+                }
+            }
+
+            if (allActivities.length > 0) {
+                updateStatus(`${allActivities.length} activités chargées.`, false);
+                drawRoutes(allActivities);
+            } else {
+                updateStatus("Aucune activité avec des données cartographiques trouvée.", false);
+            }
+        } catch (error) {
+            console.error("Erreur lors de la récupération des activités:", error);
+            updateStatus("Échec de la récupération des activités.", false);
+        }
+    }
+
+    function decodePolyline(encoded) {
+        let points = []; let index = 0, len = encoded.length; let lat = 0, lng = 0;
+        while (index < len) {
+            let b, shift = 0, result = 0;
+            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+            let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1)); lat += dlat;
+            shift = 0; result = 0;
+            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+            let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1)); lng += dlng;
+            points.push([lat / 1e5, lng / 1e5]);
+        }
+        return points;
+    }
+
+    function drawRoutes(activities) {
+        routeLayerGroup.clearLayers();
+        selectedRoute = null;
+
+        activities.forEach(activity => {
+            if (!activity.mapPoints || activity.mapPoints.length === 0) return;
+
+            const visibleLine = L.polyline(activity.mapPoints, defaultStyle);
+            const clickArea = L.polyline(activity.mapPoints, {
+                weight: 20, opacity: 0.0, interactive: true
+            });
+
+            L.layerGroup([visibleLine, clickArea]).addTo(routeLayerGroup);
+
+            clickArea.on('click', function (e) {
+                L.DomEvent.stopPropagation(e);
+
+                if (selectedRoute && selectedRoute !== visibleLine) {
+                    selectedRoute.setStyle(defaultStyle);
+                }
+
+                if (selectedRoute === visibleLine) {
+                    visibleLine.setStyle(defaultStyle);
+                    map.closePopup();
+                    selectedRoute = null;
+                } else {
+                    visibleLine.setStyle(selectedStyle);
+                    visibleLine.bringToFront();
+                    selectedRoute = visibleLine;
+
+                    const popupContent = createActivityPopup(activity);
+                    L.popup({
+                        closeButton: false,
+                        className: 'activity-popup',
+                        offset: L.point(0, -8)
+                    })
+                    .setLatLng(e.latlng)
+                    .setContent(popupContent)
+                    .openOn(map);
+                }
+            });
+        });
+    }
+
+    function createActivityPopup(a) {
+        let statsHtml = "";
+
+        if (a.type === "Ride" || a.type === "VirtualRide") {
+            statsHtml = `
+                <div><strong>Distance:</strong><span>${a.distance.toFixed(1)} km</span></div>
+                <div><strong>Dénivelé:</strong><span>${a.elevation.toFixed(0)} m</span></div>
+                <div><strong>Durée:</strong><span>${(a.moving_time / 60).toFixed(0)} min</span></div>
+                <div><strong>Vitesse moy.:</strong><span>${a.average_speed.toFixed(1)} km/h</span></div>
+                <div><strong>Date:</strong><span>${a.date}</span></div>
+            `;
+        } else if (a.type === "Run" || a.type === "TrailRun") {
+            // CORRIGÉ : Calcul de l'allure basé sur la vitesse en km/h
+            const pace = a.average_speed > 0 ? (60 / a.average_speed) : 0;
+            const paceMin = Math.floor(pace);
+            const paceSec = Math.round((pace - paceMin) * 60);
+            statsHtml = `
+                <div><strong>Distance:</strong><span>${a.distance.toFixed(1)} km</span></div>
+                <div><strong>Dénivelé:</strong><span>${a.elevation.toFixed(0)} m</span></div>
+                <div><strong>Durée:</strong><span>${(a.moving_time / 60).toFixed(0)} min</span></div>
+                <div><strong>Allure moy.:</strong><span>${paceMin}:${paceSec.toString().padStart(2, "0")}/km</span></div>
+                <div><strong>Date:</strong><span>${a.date}</span></div>
+            `;
+        } else {
+            statsHtml = `
+                <div><strong>Distance:</strong><span>${a.distance.toFixed(1)} km</span></div>
+                <div><strong>Durée:</strong><span>${(a.moving_time / 60).toFixed(0)} min</span></div>
+                <div><strong>Date:</strong><span>${a.date}</span></div>
+            `;
+        }
+
+        return `
+            <div class="popup-card">
+                <div class="popup-title">${a.name}</div>
+                <div class="popup-subtitle">${a.type}</div>
+                <div class="popup-stats">${statsHtml}</div>
+            </div>
+        `;
+    }
+    
+    function showSampleRoute() {
+        const sampleActivity = {
+            name: "Parcours de démonstration", type: "Ride", distance: 7.5, elevation: 120,
+            moving_time: 1200, average_speed: 22.5, date: "Aujourd'hui",
+            mapPoints: [[48.87, 2.33], [48.865, 2.335], [48.86, 2.33], [48.855, 2.34], [48.85, 2.35], [48.855, 2.36], [48.86, 2.365], [48.865, 2.36]]
+        };
+        drawRoutes([sampleActivity]);
+        updateStatus("Connectez-vous pour voir vos parcours.", false);
+    }
+
+    function updateStatus(message, isLoading) {
+        statusDiv.textContent = message;
+        statusDiv.classList.toggle('loading', isLoading);
+    }
+    </script>
+</body>
+</html>
+
